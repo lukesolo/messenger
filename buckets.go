@@ -15,7 +15,7 @@ type buckets struct {
 }
 
 func newBuckets(id NodeID) buckets {
-	tasks := make(chan func())
+	tasks := make(chan func(), 16)
 	b := buckets{
 		id:         id,
 		dict:       make(map[NodeID]bucketPeer),
@@ -91,7 +91,12 @@ func (b buckets) add(id NodeID, addr net.Addr) *bucketPeer {
 func (b buckets) print() {
 	for distance, bucket := range b.byDistance {
 		if len(bucket) > 0 {
-			fmt.Println(distance, len(bucket))
+			fmt.Print(distance)
+			for _, peer := range bucket {
+				fmt.Print(" ")
+				fmt.Print(peer.addr)
+			}
+			fmt.Println()
 		}
 	}
 }

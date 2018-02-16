@@ -9,6 +9,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(conn)
+	fmt.Printf("%b\n", conn.ID)
+	fmt.Println(conn.conn.LocalAddr())
 	conn.Listen()
 }

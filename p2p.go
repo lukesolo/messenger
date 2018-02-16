@@ -25,11 +25,12 @@ func init() {
 }
 
 func Connect(port int) (*server, error) {
-	id := uint32(rand.Int63())
+	id := generateID()
 	s := &server{
-		ID:       NodeID(id),
+		ID:       id,
 		initPort: uint16(port),
 		packets:  make(chan packet),
+		buckets:  newBuckets(id),
 	}
 	err := s.connect()
 	return s, err
@@ -40,6 +41,7 @@ type server struct {
 	initPort uint16
 	conn     net.PacketConn
 	packets  chan packet
+	buckets  buckets
 	root     bool
 }
 
@@ -61,10 +63,12 @@ func (s *server) connect() error {
 	return nil
 }
 
-func (s *server) Listen() {
+func (s server) Listen() {
 	if !s.root {
 		s.ping(resolveAddr(s.initPort))
 	}
+
+	go s.startRandomLookup()
 
 	for {
 		buf := make([]byte, 1024)
@@ -77,36 +81,45 @@ func (s *server) Listen() {
 	}
 }
 
-func (s *server) demultiplexPackets() {
-	buckets := newBuckets(s.ID)
+func (s server) startRandomLookup() {
+	for {
+		time.Sleep(time.Second * 5)
+		randID := generateID()
+		s.buckets.ExecBestNodes(randID, func(peers []bucketPeer) {
+			for _, peer := range peers {
+				s.findNode(peer.addr, randID)
+			}
+		})
+	}
+}
 
+func (s server) demultiplexPackets() {
 	for packet := range s.packets {
 		switch packet.header {
 		case PING:
 			log.Printf("Got PING from %v\n", packet.addr)
-			buckets.Add(packet.id, packet.addr).
+			s.buckets.Add(packet.id, packet.addr).
 				Exec(packet.id, func(peer bucketPeer) {
 					s.pong(peer.addr, packet.buf)
 				})
 		case PONG:
 			log.Printf("Got PONG from %v\n", packet.addr)
-			buckets.Add(packet.id, packet.addr).
+			s.buckets.Add(packet.id, packet.addr).
 				Exec(packet.id, func(peer bucketPeer) {
-					s.findNode(packet.addr)
+					s.findNode(packet.addr, s.ID)
 				})
 		case FIND_NODE:
 			log.Printf("Got FIND_NODE from %v\n", packet.addr)
-			buckets.Add(packet.id, packet.addr).
-				ExecBestNodes(packet.id, func(peers []bucketPeer) {
-					s.foundNode(packet.addr, packet.buf, peers)
-				})
+			s.buckets.ExecBestNodes(packet.id, func(peers []bucketPeer) {
+				s.foundNode(packet.addr, packet.buf, peers)
+			})
 		case FOUND_NODE:
 			log.Printf("Got FOUND_NODE from %v\n", packet.addr)
 			peers := parseFound(packet.buf)
 			for _, peer := range peers {
-				buckets.Add(peer.id, peer.addr)
+				s.buckets.Add(peer.id, peer.addr)
 			}
-			buckets.Print()
+			s.buckets.Print()
 		}
 	}
 }
@@ -129,11 +142,11 @@ func (s server) pong(addr net.Addr, reqId []byte) {
 	s.conn.WriteTo(buf, addr)
 }
 
-func (s server) findNode(addr net.Addr) error {
+func (s server) findNode(addr net.Addr, id NodeID) error {
 	buf := make([]byte, 9)
 	buf[0] = FIND_NODE
 	reqID := uint32(rand.Int63())
-	binary.LittleEndian.PutUint32(buf[1:5], uint32(s.ID))
+	binary.LittleEndian.PutUint32(buf[1:5], uint32(id))
 	binary.LittleEndian.PutUint32(buf[5:], reqID)
 	_, err := s.conn.WriteTo(buf, addr)
 	return err
@@ -208,4 +221,8 @@ func resolveAddr(port uint16) net.Addr {
 		log.Println(err)
 	}
 	return addr
+}
+
+func generateID() NodeID {
+	return NodeID(rand.Int63())
 }
