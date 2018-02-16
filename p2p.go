@@ -110,9 +110,11 @@ func (s server) demultiplexPackets() {
 				})
 		case FIND_NODE:
 			log.Printf("Got FIND_NODE from %v\n", packet.addr)
-			s.buckets.ExecBestNodes(packet.id, func(peers []bucketPeer) {
-				s.foundNode(packet.addr, packet.buf, peers)
-			})
+			searchedID := parseNodeID(packet.buf[4:8])
+			s.buckets.Add(packet.id, packet.addr).
+				ExecBestNodes(searchedID, func(peers []bucketPeer) {
+					s.foundNode(packet.addr, packet.buf, peers)
+				})
 		case FOUND_NODE:
 			log.Printf("Got FOUND_NODE from %v\n", packet.addr)
 			peers := parseFound(packet.buf)
@@ -143,21 +145,22 @@ func (s server) pong(addr net.Addr, reqId []byte) {
 }
 
 func (s server) findNode(addr net.Addr, id NodeID) error {
-	buf := make([]byte, 9)
+	buf := make([]byte, 13)
 	buf[0] = FIND_NODE
 	reqID := uint32(rand.Int63())
-	binary.LittleEndian.PutUint32(buf[1:5], uint32(id))
-	binary.LittleEndian.PutUint32(buf[5:], reqID)
+	binary.LittleEndian.PutUint32(buf[1:5], uint32(s.ID))
+	binary.LittleEndian.PutUint32(buf[5:9], reqID)
+	binary.LittleEndian.PutUint32(buf[9:], uint32(id))
 	_, err := s.conn.WriteTo(buf, addr)
 	return err
 }
 
-func (s server) foundNode(addr net.Addr, reqId []byte, best []bucketPeer) {
+func (s server) foundNode(addr net.Addr, reqID []byte, best []bucketPeer) {
 	l := 9 + len(best)*6
 	buf := make([]byte, l)
 	buf[0] = FOUND_NODE
 	binary.LittleEndian.PutUint32(buf[1:5], uint32(s.ID))
-	copy(buf[5:9], reqId)
+	copy(buf[5:9], reqID)
 
 	i := 9
 	for _, peer := range best {
@@ -187,6 +190,11 @@ type packet struct {
 type found struct {
 	id   NodeID
 	addr net.Addr
+}
+
+func parseNodeID(buf []byte) NodeID {
+	id := binary.LittleEndian.Uint32(buf)
+	return NodeID(id)
 }
 
 func parseFound(buf []byte) []found {
