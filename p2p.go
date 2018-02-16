@@ -111,62 +111,6 @@ func (s *server) demultiplexPackets() {
 	}
 }
 
-/*
-func (s *server) demultiplexPackets() {
-	m := make(map[uint32]Peer)
-	buckets := make([][]Peer, 33, 33)
-
-	addPeer := func(id uint32, addr net.Addr) Peer {
-		if id == s.ID {
-			return Peer{}
-		}
-
-		distance := checkDistance(s.ID, id)
-		peer := Peer{id, addr, *s, distance}
-		m[id] = peer
-		buckets[distance] = append(buckets[distance], peer)
-		return peer
-	}
-
-	printBucket := func() {
-		for i, bucket := range buckets {
-			if len(bucket) > 0 {
-				fmt.Println(i, len(bucket))
-			}
-		}
-	}
-
-	for packet := range s.packets {
-		distance := checkDistance(s.ID, packet.id)
-
-		peer, ok := m[packet.id]
-		if !ok {
-			peer = addPeer(packet.id, packet.addr)
-		}
-
-		switch packet.header {
-		case PING:
-			log.Printf("Got PING from %v\n", packet.addr)
-			go peer.pong(packet.buf)
-		case PONG:
-			log.Printf("Got PONG from %v\n", packet.addr)
-			go s.findNode(packet.addr)
-		case FIND_NODE:
-			log.Printf("Got FIND_NODE from %v\n", packet.addr)
-			best := findBestNode(buckets, distance)
-			go peer.foundNode(packet.buf, best)
-		case FOUND_NODE:
-			log.Printf("Got FOUND_NODE from %v\n", packet.addr)
-			peers := parseFound(packet.buf)
-			for _, peer := range peers {
-				addPeer(peer.id, peer.addr)
-			}
-			printBucket()
-		}
-	}
-}
-*/
-
 func (s server) ping(addr net.Addr) error {
 	buf := make([]byte, 9)
 	buf[0] = PING
@@ -214,26 +158,6 @@ func (s server) foundNode(addr net.Addr, reqId []byte, best []bucketPeer) {
 	s.conn.WriteTo(buf, addr)
 }
 
-/*
-func findBestNode(buckets [][]Peer, distance int) []Peer {
-	var best []Peer
-	for i := distance; i < 33; i++ {
-		best = append(best, buckets[i]...)
-	}
-	take := k
-	if len(best) < k {
-		take = len(best)
-	}
-	return best[:take]
-}
-
-func checkDistance(id1, id2 uint32) int {
-	xor := id1 ^ id2
-	// fmt.Printf("%b\n%b\n%b\n", id1, id2, xor)
-	return 32 - bits.LeadingZeros32(xor)
-}
-*/
-
 func newPacket(addr net.Addr, buf []byte) packet {
 	header := buf[0]
 	id := binary.LittleEndian.Uint32(buf[1:5])
@@ -264,42 +188,6 @@ func parseFound(buf []byte) []found {
 	}
 	return peers
 }
-
-/*
-type Peer struct {
-	id       uint32
-	addr     net.Addr
-	server   server
-	distance int
-}
-
-func (p Peer) pong(reqId []byte) {
-	buf := make([]byte, 9)
-	buf[0] = PONG
-	binary.LittleEndian.PutUint32(buf[1:5], p.server.ID)
-	copy(buf[5:], reqId)
-	p.server.conn.WriteTo(buf, p.addr)
-}
-
-func (p Peer) foundNode(reqId []byte, best []Peer) {
-	l := 9 + len(best)*6
-	buf := make([]byte, l)
-	buf[0] = FOUND_NODE
-	binary.LittleEndian.PutUint32(buf[1:5], p.server.ID)
-	copy(buf[5:9], reqId)
-
-	i := 9
-	for _, peer := range best {
-		binary.LittleEndian.PutUint32(buf[i:i+4], peer.id)
-		i += 4
-		port := getPort(peer.addr.String())
-		binary.LittleEndian.PutUint16(buf[i:i+2], port)
-		i += 2
-	}
-
-	p.server.conn.WriteTo(buf, p.addr)
-}
-*/
 
 func formatAddr(port uint16) string {
 	return fmt.Sprintf("127.0.0.1:%d", port)
