@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math/bits"
+	"math/rand"
 	"net"
 )
 
@@ -65,6 +67,15 @@ func (b buckets) ExecBestNodes(id NodeID, task func([]bucketPeer)) {
 	}
 }
 
+func (b buckets) ExecByDistance(distance byte, task func(bucketPeer)) {
+	b.tasks <- func() {
+		peer, ok := b.getByDistance(distance)
+		if ok {
+			go task(peer)
+		}
+	}
+}
+
 func (b buckets) start(tasks <-chan func()) {
 	for task := range tasks {
 		task()
@@ -85,7 +96,17 @@ func (b buckets) add(id NodeID, addr net.Addr) *bucketPeer {
 	b.dict[id] = peer
 	distance := b.calcDistance(id)
 	b.byDistance[distance] = append(b.byDistance[distance], peer)
+	log.Println("Added", peer.addr, "to", distance, "bucket")
 	return &peer
+}
+
+func (b buckets) getByDistance(distance byte) (bucketPeer, bool) {
+	bucket := b.byDistance[distance]
+	if len(bucket) == 0 {
+		return bucketPeer{}, false
+	}
+	someIndex := rand.Intn(len(bucket))
+	return bucket[someIndex], true
 }
 
 func (b buckets) print() {

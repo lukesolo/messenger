@@ -18,6 +18,7 @@ const (
 	PONG       = 2
 	FIND_NODE  = 3
 	FOUND_NODE = 4
+	BROADCAST  = 5
 )
 
 func init() {
@@ -77,7 +78,12 @@ func (s server) Listen() {
 			log.Println(err)
 			continue
 		}
-		s.packets <- newPacket(addr, buf[:n])
+		packet, err := parsePacket(addr, buf[:n])
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		s.packets <- packet
 	}
 }
 
@@ -89,6 +95,19 @@ func (s server) startRandomLookup() {
 			for _, peer := range peers {
 				s.findNode(peer.addr, randID)
 			}
+		})
+	}
+}
+
+func (s server) Broadcast(data []byte) {
+	s.broadcast(32, data)
+}
+
+func (s server) broadcast(distance byte, data []byte) {
+	for d := distance; d > 0; d-- {
+		distance := d
+		s.buckets.ExecByDistance(distance, func(peer bucketPeer) {
+			s.sendBroadcast(peer.addr, byte(distance)-1, data)
 		})
 	}
 }
@@ -109,19 +128,28 @@ func (s server) demultiplexPackets() {
 					s.findNode(packet.addr, s.ID)
 				})
 		case FIND_NODE:
-			log.Printf("Got FIND_NODE from %v\n", packet.addr)
+			// log.Printf("Got FIND_NODE from %v\n", packet.addr)
 			searchedID := parseNodeID(packet.buf[4:8])
 			s.buckets.Add(packet.id, packet.addr).
 				ExecBestNodes(searchedID, func(peers []bucketPeer) {
 					s.foundNode(packet.addr, packet.buf, peers)
 				})
 		case FOUND_NODE:
-			log.Printf("Got FOUND_NODE from %v\n", packet.addr)
+			// log.Printf("Got FOUND_NODE from %v\n", packet.addr)
 			peers := parseFound(packet.buf)
 			for _, peer := range peers {
 				s.buckets.Add(peer.id, peer.addr)
 			}
-			s.buckets.Print()
+			// s.buckets.Print()
+		case BROADCAST:
+			log.Printf("Got BROADCAST from %v\n", packet.addr)
+			distance := packet.buf[4]
+			data := packet.buf[5:]
+			fmt.Println(distance, string(data))
+			s.buckets.Add(packet.id, packet.addr)
+			go s.broadcast(distance, data)
+		default:
+			log.Println("Got unknown header:", packet.header)
 		}
 	}
 }
@@ -174,10 +202,36 @@ func (s server) foundNode(addr net.Addr, reqID []byte, best []bucketPeer) {
 	s.conn.WriteTo(buf, addr)
 }
 
-func newPacket(addr net.Addr, buf []byte) packet {
+func (s server) sendBroadcast(addr net.Addr, distance byte, data []byte) error {
+	size := calcPacketLength(len(data) + 1)
+	buf := s.writeHeaders(BROADCAST, size)
+	buf[9] = distance
+	copy(buf[10:], data)
+	_, err := s.conn.WriteTo(buf, addr)
+	return err
+}
+
+func (s server) writeHeaders(header byte, size int) []byte {
+	buf := make([]byte, size)
+	buf[0] = header
+	reqID := uint32(rand.Int63())
+	binary.LittleEndian.PutUint32(buf[1:5], uint32(s.ID))
+	binary.LittleEndian.PutUint32(buf[5:9], reqID)
+	return buf
+}
+
+func calcPacketLength(contentLength int) int {
+	return 9 + contentLength
+}
+
+func parsePacket(addr net.Addr, buf []byte) (packet, error) {
+	if len(buf) < 9 {
+		return packet{}, fmt.Errorf("Packet from %v is to short, only %v bytes", addr, len(buf))
+	}
+
 	header := buf[0]
 	id := binary.LittleEndian.Uint32(buf[1:5])
-	return packet{addr, header, NodeID(id), buf[5:]}
+	return packet{addr, header, NodeID(id), buf[5:]}, nil
 }
 
 type packet struct {

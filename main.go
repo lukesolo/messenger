@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 )
 
 func main() {
@@ -11,5 +12,16 @@ func main() {
 	}
 	fmt.Printf("%b\n", conn.ID)
 	fmt.Println(conn.conn.LocalAddr())
+
+	go func() {
+		if !conn.root {
+			return
+		}
+		for {
+			time.Sleep(time.Second * 5)
+			conn.Broadcast([]byte("Hi!"))
+		}
+	}()
+
 	conn.Listen()
 }
