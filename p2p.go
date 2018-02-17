@@ -28,22 +28,24 @@ func init() {
 func Connect(port int) (*server, error) {
 	id := generateID()
 	s := &server{
-		ID:       id,
-		initPort: uint16(port),
-		packets:  make(chan packet),
-		buckets:  newBuckets(id),
+		ID:         id,
+		initPort:   uint16(port),
+		packets:    make(chan packet, 16),
+		broadcasts: make(chan BroadcastMessage, 16),
+		buckets:    newBuckets(id),
 	}
 	err := s.connect()
 	return s, err
 }
 
 type server struct {
-	ID       NodeID
-	initPort uint16
-	conn     net.PacketConn
-	packets  chan packet
-	buckets  buckets
-	root     bool
+	ID         NodeID
+	initPort   uint16
+	conn       net.PacketConn
+	packets    chan packet
+	broadcasts chan BroadcastMessage
+	buckets    buckets
+	root       bool
 }
 
 func (s *server) connect() error {
@@ -64,27 +66,31 @@ func (s *server) connect() error {
 	return nil
 }
 
-func (s server) Listen() {
+func (s server) Listen() <-chan BroadcastMessage {
 	if !s.root {
 		s.ping(resolveAddr(s.initPort))
 	}
 
 	go s.startRandomLookup()
 
-	for {
-		buf := make([]byte, 1024)
-		n, addr, err := s.conn.ReadFrom(buf)
-		if err != nil {
-			log.Println(err)
-			continue
+	go func() {
+		for {
+			buf := make([]byte, 1024)
+			n, addr, err := s.conn.ReadFrom(buf)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			packet, err := parsePacket(addr, buf[:n])
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			s.packets <- packet
 		}
-		packet, err := parsePacket(addr, buf[:n])
-		if err != nil {
-			log.Println(err)
-			continue
-		}
-		s.packets <- packet
-	}
+	}()
+
+	return s.broadcasts
 }
 
 func (s server) startRandomLookup() {
@@ -145,9 +151,13 @@ func (s server) demultiplexPackets() {
 			log.Printf("Got BROADCAST from %v\n", packet.addr)
 			distance := packet.buf[4]
 			data := packet.buf[5:]
-			fmt.Println(distance, string(data))
 			s.buckets.Add(packet.id, packet.addr)
-			go s.broadcast(distance, data)
+			s.broadcasts <- BroadcastMessage{
+				Data: data,
+				Resend: func() {
+					go s.broadcast(distance, data)
+				},
+			}
 		default:
 			log.Println("Got unknown header:", packet.header)
 		}
@@ -239,6 +249,11 @@ type packet struct {
 	header byte
 	id     NodeID
 	buf    []byte
+}
+
+type BroadcastMessage struct {
+	Data   []byte
+	Resend func()
 }
 
 type found struct {
