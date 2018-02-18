@@ -14,23 +14,46 @@ const (
 	LAST_MESSAGE = 1
 )
 
-var blockchain *Blockchain
+func main() {
+	msgr := NewMessenger(10000)
 
-func init() {
-	blockchain = NewBlockchain()
+	go func() {
+		time.Sleep(time.Second * 3)
+		msgr.Publish(fmt.Sprintf("Hi from %v", msgr.peer.Port()))
+	}()
+
+	err := msgr.Start()
+	if err != nil {
+		log.Fatalln(err)
+	}
 }
 
-func main() {
-	conn, err := Connect(10000)
-	if err != nil {
-		panic(err)
+func NewMessenger(initPort int) *messenger {
+	return &messenger{
+		initPort:   initPort,
+		blockchain: NewBlockchain(),
 	}
-	port := conn.Port()
-	idBits := fmt.Sprintf("%b", conn.ID)
+}
+
+type messenger struct {
+	initPort   int
+	peer       *server
+	blockchain *Blockchain
+}
+
+func (msgr *messenger) Start() error {
+	peer, err := Connect(msgr.initPort)
+	if err != nil {
+		return err
+	}
+	msgr.peer = peer
+
+	port := peer.Port()
+	idBits := fmt.Sprintf("%b", peer.ID)
 	idBits = strings.Repeat("0", 32-len(idBits)) + idBits
 	log.Printf("Started to listen on port %v with NodeID\n%s\n", port, idBits)
 
-	tcp, err := net.Listen("tcp", conn.Addr())
+	tcp, err := net.Listen("tcp", peer.Addr())
 	if err != nil {
 		panic(err)
 	}
@@ -43,43 +66,43 @@ func main() {
 				log.Println(err)
 				continue
 			}
-			go handleBlockchainTCP(conn)
+			go msgr.handleBlockchainTCP(conn)
 		}
 	}()
 
 	go func() {
-		time.Sleep(time.Second * 10)
-		m := blockchain.NewMessage(fmt.Sprintf("Hi from %v", conn.Port()))
-		conn.Broadcast(m.ToBytes())
-	}()
-
-	go func() {
 		for {
-			time.Sleep(time.Second * 1)
-			conn.DirectToFurthest(directLastMessagePacket())
+			time.Sleep(time.Millisecond * 500)
+			peer.DirectToFurthest(msgr.directLastMessagePacket())
 		}
 	}()
 
 	go func() {
 		for {
 			time.Sleep(time.Second * 5)
-			last := blockchain.Last()
+			last := msgr.blockchain.Last()
 			log.Printf("Blockchain length is %d and last message is \"%s\"\n", last.Index, last.Text)
 		}
 	}()
 
-	directs, broadcasts := conn.Listen()
+	directs, broadcasts := peer.Listen()
 	go func() {
 		for direct := range directs {
-			go handleDirect(conn, direct)
+			go msgr.handleDirect(direct)
 		}
 	}()
 	for broadcast := range broadcasts {
-		go handleBroadcast(broadcast)
+		go msgr.handleBroadcast(broadcast)
 	}
+	return nil
 }
 
-func handleDirect(conn *server, direct DirectMessage) {
+func (msgr messenger) Publish(text string) {
+	m := msgr.blockchain.NewMessage(text)
+	msgr.peer.Broadcast(m.ToBytes())
+}
+
+func (msgr messenger) handleDirect(direct DirectMessage) {
 	switch direct.Data[0] {
 	case LAST_MESSAGE:
 		m, err := FromBytes(direct.Data[1:])
@@ -87,18 +110,18 @@ func handleDirect(conn *server, direct DirectMessage) {
 			log.Println(err)
 			return
 		}
-		last := blockchain.Last()
+		last := msgr.blockchain.Last()
 		if m.Index < last.Index {
-			go sendBlockchainTCP(direct.Addr)
+			go msgr.sendBlockchainTCP(direct.Addr)
 		}
 
 		if m.Index == last.Index {
 			return
 		}
 
-		if !blockchain.AddLast(*m) {
+		if !msgr.blockchain.AddLast(*m) {
 			log.Printf("Invalid direct message with index %d from %v\n", m.Index, direct.Addr)
-			go conn.Direct(direct.ID, directLastMessagePacket())
+			go msgr.peer.Direct(direct.ID, msgr.directLastMessagePacket())
 		} else {
 			log.Printf("Valid direct message with index %d from %v\n", m.Index, direct.Addr)
 		}
@@ -107,22 +130,22 @@ func handleDirect(conn *server, direct DirectMessage) {
 	}
 }
 
-func handleBroadcast(broadcast BroadcastMessage) {
+func (msgr messenger) handleBroadcast(broadcast BroadcastMessage) {
 	m, err := FromBytes(broadcast.Data)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-	if blockchain.AddLast(*m) {
+	if msgr.blockchain.AddLast(*m) {
 		log.Printf("Valid message with index %d from %v\n", m.Index, broadcast.Addr)
 		broadcast.Resend()
 	} else {
 		log.Printf("Invalid message with index %d from %v\n", m.Index, broadcast.Addr)
-		go sendBlockchainTCP(broadcast.Addr)
+		go msgr.sendBlockchainTCP(broadcast.Addr)
 	}
 }
 
-func handleBlockchainTCP(conn net.Conn) {
+func (msgr messenger) handleBlockchainTCP(conn net.Conn) {
 	defer conn.Close()
 
 	decoder := codec.NewDecoder(conn, &codec.MsgpackHandle{})
@@ -133,15 +156,15 @@ func handleBlockchainTCP(conn net.Conn) {
 		return
 	}
 
-	last := blockchain.Last()
-	if blockchain.Replace(blocks) {
+	last := msgr.blockchain.Last()
+	if msgr.blockchain.Replace(blocks) {
 		log.Printf("Blockchain with length %d is replaced with %d blocks long\n", last.Index, len(blocks)-1)
 	} else {
 		log.Printf("Blockchain with length %d is not replaced with %d blocks long\n", last.Index, len(blocks)-1)
 	}
 }
 
-func sendBlockchainTCP(addr string) {
+func (msgr messenger) sendBlockchainTCP(addr string) {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		log.Println(err)
@@ -150,14 +173,14 @@ func sendBlockchainTCP(addr string) {
 	defer conn.Close()
 
 	encoder := codec.NewEncoder(conn, &codec.MsgpackHandle{})
-	err = encoder.Encode(blockchain.blocks)
+	err = encoder.Encode(msgr.blockchain.blocks)
 	if err != nil {
 		log.Println(err)
 	}
 }
 
-func directLastMessagePacket() []byte {
-	last := blockchain.Last()
+func (msgr messenger) directLastMessagePacket() []byte {
+	last := msgr.blockchain.Last()
 	data := last.ToBytes()
 	buf := make([]byte, len(data)+1)
 	buf[0] = LAST_MESSAGE

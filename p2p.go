@@ -112,7 +112,7 @@ func (s server) Listen() (<-chan DirectMessage, <-chan BroadcastMessage) {
 
 func (s server) startRandomLookup() {
 	for {
-		time.Sleep(time.Second * 5)
+		time.Sleep(time.Second * 2)
 		randID := generateID()
 		s.buckets.ExecBestNodes(randID, func(peers []bucketPeer) {
 			for _, peer := range peers {
