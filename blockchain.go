@@ -9,13 +9,15 @@ import (
 	"sync"
 )
 
-func NewBlockchain() *Blockchain {
+func NewBlockchain(store io.Writer) *Blockchain {
 	genesis := message{}
 	genesis.Hash = genesis.calcHash()
 	bc := &Blockchain{
 		genesis: genesis,
 		blocks:  []message{genesis},
+		store:   store,
 	}
+	bc.save("init")
 	return bc
 }
 
@@ -23,6 +25,7 @@ type Blockchain struct {
 	genesis message
 	blocks  []message
 	mutex   sync.RWMutex
+	store   io.Writer
 }
 
 func (bc *Blockchain) Last() message {
@@ -44,6 +47,7 @@ func (bc *Blockchain) NewMessage(text string) message {
 	}
 	m.Hash = m.calcHash()
 	bc.blocks = append(bc.blocks, m)
+	bc.save("generated")
 	return m
 }
 
@@ -54,6 +58,7 @@ func (bc *Blockchain) AddLast(m message) bool {
 	last := bc.last()
 	if m.validate(last) {
 		bc.blocks = append(bc.blocks, m)
+		bc.save("got new from another peer")
 		return true
 	}
 	return false
@@ -65,6 +70,7 @@ func (bc *Blockchain) Replace(blocks []message) bool {
 
 	if bc.validate(blocks) {
 		bc.blocks = blocks
+		bc.save("fully replaced")
 		return true
 	}
 	return false
@@ -89,6 +95,16 @@ func (bc Blockchain) validate(blocks []message) bool {
 
 func (bc Blockchain) last() message {
 	return bc.blocks[len(bc.blocks)-1]
+}
+
+func (bc Blockchain) save(source string) {
+	last := bc.last()
+	for {
+		_, err := fmt.Fprintf(bc.store, "%s\nindex: %d\tmessage: \"%s\"\n\n", source, last.Index, last.Text)
+		if err == nil {
+			return
+		}
+	}
 }
 
 type message struct {

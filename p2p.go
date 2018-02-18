@@ -45,7 +45,7 @@ type server struct {
 	packets    chan packet
 	broadcasts chan BroadcastMessage
 	directs    chan DirectMessage
-	buckets    buckets
+	buckets    *buckets
 	root       bool
 }
 
@@ -83,7 +83,12 @@ func (s server) Port() int {
 
 func (s server) Listen() (<-chan DirectMessage, <-chan BroadcastMessage) {
 	if !s.root {
-		s.ping(resolveAddr(s.initPort))
+		go func() {
+			for s.buckets.count == 0 {
+				s.ping(resolveAddr(s.initPort))
+				time.Sleep(time.Millisecond * 100)
+			}
+		}()
 	}
 
 	go s.startRandomLookup()
@@ -123,7 +128,7 @@ func (s server) startRandomLookup() {
 
 func (s server) startClosestLookup() {
 	for {
-		time.Sleep(time.Millisecond * 500)
+		time.Sleep(time.Second * 1)
 		s.buckets.ExecBestNodes(s.ID, func(peers []bucketPeer) {
 			for _, peer := range peers {
 				s.findNode(peer.addr, s.ID)
@@ -197,7 +202,7 @@ func (s server) demultiplexPackets() {
 				Data: packet.data,
 			}
 		case BROADCAST:
-			log.Printf("Got BROADCAST from %v\n", packet.addr)
+			// log.Printf("Got BROADCAST from %v\n", packet.addr)
 			distance := packet.data[0]
 			data := packet.data[1:]
 			s.buckets.Add(packet.id, packet.addr)
@@ -205,7 +210,7 @@ func (s server) demultiplexPackets() {
 				ID:   packet.id,
 				Addr: packet.addr.String(),
 				Data: data,
-				Resend: func() {
+				Next: func() {
 					go s.broadcast(distance, data)
 				},
 			}
@@ -307,10 +312,10 @@ type packet struct {
 }
 
 type BroadcastMessage struct {
-	ID     NodeID
-	Addr   string
-	Data   []byte
-	Resend func()
+	ID   NodeID
+	Addr string
+	Data []byte
+	Next func()
 }
 
 type DirectMessage struct {

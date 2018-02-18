@@ -14,13 +14,14 @@ type buckets struct {
 	id         NodeID
 	dict       map[NodeID]bucketPeer
 	byDistance [][]bucketPeer
+	count      int
 
 	tasks chan<- func()
 }
 
-func newBuckets(id NodeID) buckets {
+func newBuckets(id NodeID) *buckets {
 	tasks := make(chan func(), 16)
-	b := buckets{
+	b := &buckets{
 		id:         id,
 		dict:       make(map[NodeID]bucketPeer),
 		byDistance: make([][]bucketPeer, 33, 33),
@@ -30,7 +31,7 @@ func newBuckets(id NodeID) buckets {
 	return b
 }
 
-func (b buckets) Add(id NodeID, addr net.Addr) buckets {
+func (b *buckets) Add(id NodeID, addr net.Addr) *buckets {
 	b.tasks <- func() {
 		b.add(id, addr)
 	}
@@ -84,7 +85,7 @@ func (b buckets) start(tasks <-chan func()) {
 	}
 }
 
-func (b buckets) add(id NodeID, addr net.Addr) *bucketPeer {
+func (b *buckets) add(id NodeID, addr net.Addr) *bucketPeer {
 	if id == b.id {
 		return nil
 	}
@@ -100,6 +101,7 @@ func (b buckets) add(id NodeID, addr net.Addr) *bucketPeer {
 	if len(b.byDistance[distance]) > k {
 		return nil
 	}
+	b.count++
 	b.byDistance[distance] = append(b.byDistance[distance], peer)
 	log.Println("Added", peer.addr, "to", distance, "bucket")
 	return &peer

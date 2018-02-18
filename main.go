@@ -5,6 +5,8 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,29 +18,31 @@ const (
 )
 
 func main() {
-	for i := 0; i < 1; i++ {
-		go func() {
-			msgr := NewMessenger(10000)
+	os.Mkdir("./logs", 0666)
+	portStr := os.Args[1]
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Fatalln(err)
+	}
 
-			go func() {
-				time.Sleep(time.Millisecond * time.Duration(rand.Intn(5000)+5000))
-				msgr.Publish(fmt.Sprintf("Hi from %v", msgr.peer.Port()))
-			}()
+	msgr := NewMessenger(port)
 
-			time.Sleep(time.Millisecond * time.Duration(rand.Intn(500)))
-			err := msgr.Start()
-			if err != nil {
-				log.Fatalln(err)
-			}
-		}()
+	go func() {
+		time.Sleep(time.Millisecond * time.Duration(rand.Intn(5000)+5000))
+		msgr.Publish(fmt.Sprintf("Hi from %v", msgr.peer.Port()))
+	}()
+
+	time.Sleep(time.Millisecond * time.Duration(rand.Intn(500)))
+	err = msgr.Start()
+	if err != nil {
+		log.Fatalln(err)
 	}
 	time.Sleep(time.Hour)
 }
 
 func NewMessenger(initPort int) *messenger {
 	return &messenger{
-		initPort:   initPort,
-		blockchain: NewBlockchain(),
+		initPort: initPort,
 	}
 }
 
@@ -56,17 +60,30 @@ func (msgr *messenger) Start() error {
 	msgr.peer = peer
 
 	port := peer.Port()
+	tcp, err := net.Listen("tcp", peer.Addr())
+	if err != nil {
+		return err
+	}
+
+	logFile, err := os.OpenFile(fmt.Sprintf("./logs/%v.log", port), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Println(err)
+	}
+	log.SetOutput(logFile)
+	bcLogFile, err := os.OpenFile(fmt.Sprintf("./logs/%v.blockchain.log", port), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Println(err)
+	}
+	blockchain := NewBlockchain(bcLogFile)
+	msgr.blockchain = blockchain
+
 	idBits := fmt.Sprintf("%b", peer.ID)
 	idBits = strings.Repeat("0", 32-len(idBits)) + idBits
 	log.Printf("Started to listen on port %v with NodeID\n%s\n", port, idBits)
 
-	tcp, err := net.Listen("tcp", peer.Addr())
-	if err != nil {
-		panic(err)
-	}
-	defer tcp.Close()
-
 	go func() {
+		defer tcp.Close()
+
 		for {
 			conn, err := tcp.Accept()
 			if err != nil {
@@ -79,16 +96,8 @@ func (msgr *messenger) Start() error {
 
 	go func() {
 		for {
-			time.Sleep(time.Millisecond * 500)
+			time.Sleep(time.Second * 2)
 			peer.DirectToFurthest(msgr.directLastMessagePacket())
-		}
-	}()
-
-	go func() {
-		for {
-			time.Sleep(time.Second * 5)
-			last := msgr.blockchain.Last()
-			log.Printf("Blockchain length is %d and last message is \"%s\"\n", last.Index, last.Text)
 		}
 	}()
 
@@ -98,9 +107,11 @@ func (msgr *messenger) Start() error {
 			go msgr.handleDirect(direct)
 		}
 	}()
-	for broadcast := range broadcasts {
-		go msgr.handleBroadcast(broadcast)
-	}
+	go func() {
+		for broadcast := range broadcasts {
+			go msgr.handleBroadcast(broadcast)
+		}
+	}()
 	return nil
 }
 
@@ -120,17 +131,18 @@ func (msgr messenger) handleDirect(direct DirectMessage) {
 		last := msgr.blockchain.Last()
 		if m.Index < last.Index {
 			go msgr.sendBlockchainTCP(direct.Addr)
+			return
 		}
 
 		if m.Index == last.Index {
 			return
 		}
 
-		if !msgr.blockchain.AddLast(*m) {
+		if msgr.blockchain.AddLast(*m) {
+			log.Printf("Valid direct message with index %d from %v\n", m.Index, direct.Addr)
+		} else {
 			log.Printf("Invalid direct message with index %d from %v\n", m.Index, direct.Addr)
 			go msgr.peer.Direct(direct.ID, msgr.directLastMessagePacket())
-		} else {
-			log.Printf("Valid direct message with index %d from %v\n", m.Index, direct.Addr)
 		}
 	default:
 		log.Println("Unknown header", direct.Data[0])
@@ -143,9 +155,19 @@ func (msgr messenger) handleBroadcast(broadcast BroadcastMessage) {
 		log.Println(err)
 		return
 	}
+	last := msgr.blockchain.Last()
+	if m.Index < last.Index {
+		go msgr.sendBlockchainTCP(broadcast.Addr)
+		return
+	}
+
+	if m.Index == last.Index {
+		return
+	}
+
 	if msgr.blockchain.AddLast(*m) {
 		log.Printf("Valid message with index %d from %v\n", m.Index, broadcast.Addr)
-		broadcast.Resend()
+		broadcast.Next()
 	} else {
 		log.Printf("Invalid message with index %d from %v\n", m.Index, broadcast.Addr)
 		go msgr.sendBlockchainTCP(broadcast.Addr)
