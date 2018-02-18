@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-const k = 5
-
 const (
 	PING       = 1
 	PONG       = 2
@@ -89,6 +87,7 @@ func (s server) Listen() (<-chan DirectMessage, <-chan BroadcastMessage) {
 	}
 
 	go s.startRandomLookup()
+	go s.startClosestLookup()
 
 	go func() {
 		for {
@@ -122,6 +121,17 @@ func (s server) startRandomLookup() {
 	}
 }
 
+func (s server) startClosestLookup() {
+	for {
+		time.Sleep(time.Millisecond * 500)
+		s.buckets.ExecBestNodes(s.ID, func(peers []bucketPeer) {
+			for _, peer := range peers {
+				s.findNode(peer.addr, s.ID)
+			}
+		})
+	}
+}
+
 func (s server) Broadcast(data []byte) {
 	s.broadcast(32, data)
 }
@@ -142,9 +152,11 @@ func (s server) Direct(id NodeID, data []byte) {
 }
 
 func (s server) DirectToFurthest(data []byte) {
-	s.buckets.ExecByDistance(32, func(peer bucketPeer) {
-		s.sendDirect(peer.addr, data)
-	})
+	for distance := byte(1); distance <= 32; distance++ {
+		s.buckets.ExecByDistance(distance, func(peer bucketPeer) {
+			s.sendDirect(peer.addr, data)
+		})
+	}
 }
 
 func (s server) demultiplexPackets() {

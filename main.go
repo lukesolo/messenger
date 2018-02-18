@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"strings"
 	"time"
@@ -15,17 +16,23 @@ const (
 )
 
 func main() {
-	msgr := NewMessenger(10000)
+	for i := 0; i < 1; i++ {
+		go func() {
+			msgr := NewMessenger(10000)
 
-	go func() {
-		time.Sleep(time.Second * 3)
-		msgr.Publish(fmt.Sprintf("Hi from %v", msgr.peer.Port()))
-	}()
+			go func() {
+				time.Sleep(time.Millisecond * time.Duration(rand.Intn(5000)+5000))
+				msgr.Publish(fmt.Sprintf("Hi from %v", msgr.peer.Port()))
+			}()
 
-	err := msgr.Start()
-	if err != nil {
-		log.Fatalln(err)
+			time.Sleep(time.Millisecond * time.Duration(rand.Intn(500)))
+			err := msgr.Start()
+			if err != nil {
+				log.Fatalln(err)
+			}
+		}()
 	}
+	time.Sleep(time.Hour)
 }
 
 func NewMessenger(initPort int) *messenger {

@@ -8,6 +8,8 @@ import (
 	"net"
 )
 
+const k = 5
+
 type buckets struct {
 	id         NodeID
 	dict       map[NodeID]bucketPeer
@@ -95,6 +97,9 @@ func (b buckets) add(id NodeID, addr net.Addr) *bucketPeer {
 	peer = bucketPeer{id, addr}
 	b.dict[id] = peer
 	distance := b.calcDistance(id)
+	if len(b.byDistance[distance]) > k {
+		return nil
+	}
 	b.byDistance[distance] = append(b.byDistance[distance], peer)
 	log.Println("Added", peer.addr, "to", distance, "bucket")
 	return &peer
