@@ -153,6 +153,8 @@ func (s server) demultiplexPackets() {
 			data := packet.data[1:]
 			s.buckets.Add(packet.id, packet.addr)
 			s.broadcasts <- BroadcastMessage{
+				ID:   s.ID,
+				Addr: s.conn.LocalAddr().String(),
 				Data: data,
 				Resend: func() {
 					go s.broadcast(distance, data)
@@ -253,6 +255,8 @@ type packet struct {
 }
 
 type BroadcastMessage struct {
+	ID     NodeID
+	Addr   string
 	Data   []byte
 	Resend func()
 }

@@ -17,7 +17,7 @@ import (
 var blockchain *Blockchain
 
 func init() {
-	blockchain = newBlockchain()
+	blockchain = NewBlockchain()
 }
 
 func main() {
@@ -47,7 +47,7 @@ func main() {
 
 	go func() {
 		time.Sleep(time.Second * 10)
-		m := blockchain.newMessage(fmt.Sprintf("Hi from %v", conn.conn.LocalAddr()))
+		m := blockchain.NewMessage(fmt.Sprintf("Hi from %v", conn.conn.LocalAddr()))
 		conn.Broadcast(m.ToBytes())
 	}()
 
@@ -59,9 +59,12 @@ func main() {
 			continue
 		}
 		fmt.Println(m.index, m.text)
-		if blockchain.addLastMessage(m) {
+		if blockchain.AddLast(*m) {
 			fmt.Println("valid")
 			broadcast.Resend()
+		} else {
+			fmt.Println("invalid")
+			go loadBlockchainTCP(broadcast.Addr)
 		}
 	}
 }
@@ -69,53 +72,114 @@ func main() {
 func handleBlockchainTCP(conn net.Conn) {
 	defer conn.Close()
 	encoder := codec.NewEncoder(conn, &codec.MsgpackHandle{})
-	err := encoder.Encode(blockchain.last)
+	err := encoder.Encode(blockchain.blocks)
 	if err != nil {
 		log.Println(err)
 	}
 }
 
-func newBlockchain() *Blockchain {
-	genesis := &message{}
+func loadBlockchainTCP(addr string) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer conn.Close()
+
+	decoder := codec.NewDecoder(conn, &codec.MsgpackHandle{})
+	var blocks []message
+	err = decoder.Decode(&blocks)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	if blockchain.Replace(blocks) {
+		fmt.Println("Blockchain replaced:", blockchain.Last().index)
+	} else {
+		fmt.Println("Blockchain not replaced:", blockchain.Last().index)
+	}
+}
+
+func NewBlockchain() *Blockchain {
+	genesis := message{}
 	genesis.hash = calcHash(genesis)
 	bc := &Blockchain{
 		genesis: genesis,
-		last:    genesis,
+		blocks:  []message{genesis},
 	}
 	return bc
 }
 
 type Blockchain struct {
-	genesis *message
-	last    *message
+	genesis message
+	blocks  []message
 	mutex   sync.RWMutex
 }
 
-func (bc *Blockchain) newMessage(text string) *message {
+func (bc *Blockchain) Last() message {
+	bc.mutex.RLock()
+	defer bc.mutex.RUnlock()
+
+	return bc.last()
+}
+
+func (bc *Blockchain) NewMessage(text string) message {
 	bc.mutex.Lock()
 	defer bc.mutex.Unlock()
 
-	m := &message{
+	last := bc.last()
+	m := message{
 		text:     text,
-		index:    bc.last.index + 1,
-		prevHash: bc.last.hash,
-		prev:     bc.last,
+		index:    last.index + 1,
+		prevHash: last.hash,
 	}
 	m.hash = calcHash(m)
-	bc.last = m
+	bc.blocks = append(bc.blocks, m)
 	return m
 }
 
-func (bc *Blockchain) addLastMessage(m *message) bool {
+func (bc *Blockchain) AddLast(m message) bool {
 	bc.mutex.Lock()
 	defer bc.mutex.Unlock()
 
-	if m.validate(bc.last) {
-		m.prev = bc.last
-		bc.last = m
+	last := bc.last()
+	if m.validate(last) {
+		bc.blocks = append(bc.blocks, m)
 		return true
 	}
 	return false
+}
+
+func (bc *Blockchain) Replace(blocks []message) bool {
+	bc.mutex.Lock()
+	defer bc.mutex.Unlock()
+
+	if bc.validate(blocks) {
+		bc.blocks = blocks
+		return true
+	}
+	return false
+}
+
+func (bc Blockchain) validate(blocks []message) bool {
+	if len(bc.blocks) >= len(blocks) {
+		return false
+	}
+	if bytes.Compare(bc.blocks[0].hash, blocks[0].hash) != 0 {
+		return false
+	}
+	prev := blocks[0]
+	for _, m := range blocks[1:] {
+		if !m.validate(prev) {
+			return false
+		}
+		prev = m
+	}
+	return true
+}
+
+func (bc Blockchain) last() message {
+	return bc.blocks[len(bc.blocks)-1]
 }
 
 type message struct {
@@ -123,10 +187,9 @@ type message struct {
 	prevHash []byte
 	hash     []byte
 	text     string
-	prev     *message
 }
 
-func (m *message) validate(prev *message) bool {
+func (m message) validate(prev message) bool {
 	if m.index != prev.index+1 {
 		return false
 	}
@@ -140,7 +203,7 @@ func (m *message) validate(prev *message) bool {
 	return true
 }
 
-func (m message) ToBytes() []byte {
+func (m *message) ToBytes() []byte {
 	size := 4 + 32 + 32 + len(m.text)
 	buf := make([]byte, size)
 	binary.LittleEndian.PutUint32(buf, m.index)
@@ -163,7 +226,7 @@ func FromBytes(buf []byte) (*message, error) {
 	return m, nil
 }
 
-func calcHash(m *message) []byte {
+func calcHash(m message) []byte {
 	h := sha256.New()
 	binary.Write(h, binary.LittleEndian, m.index)
 	h.Write(m.prevHash)
