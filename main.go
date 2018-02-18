@@ -52,7 +52,8 @@ func main() {
 	go func() {
 		for {
 			time.Sleep(time.Second * 5)
-			log.Printf("My last message is \"%s\"\n", blockchain.Last().Text)
+			last := blockchain.Last()
+			log.Printf("Blockchain length is %d and last message is \"%s\"\n", last.Index, last.Text)
 		}
 	}()
 
@@ -63,12 +64,11 @@ func main() {
 			log.Println(err)
 			continue
 		}
-		fmt.Println(m.Index, m.Text)
 		if blockchain.AddLast(*m) {
-			fmt.Println("valid from", broadcast.Addr)
+			log.Printf("Valid message with index %d from %v\n", m.Index, broadcast.Addr)
 			broadcast.Resend()
 		} else {
-			fmt.Println("invalid from", broadcast.Addr)
+			log.Printf("Invalid message with index %d from %v\n", m.Index, broadcast.Addr)
 			go sendBlockchainTCP(broadcast.Addr)
 		}
 	}
@@ -85,11 +85,11 @@ func handleBlockchainTCP(conn net.Conn) {
 		return
 	}
 
-	fmt.Println("Received blocks:", len(blocks))
+	last := blockchain.Last()
 	if blockchain.Replace(blocks) {
-		fmt.Println("Blockchain replaced:", blockchain.Last().Index)
+		log.Printf("Blockchain with length %d is replaced with %d blocks long\n", last.Index, len(blocks)-1)
 	} else {
-		fmt.Println("Blockchain not replaced:", blockchain.Last().Index)
+		log.Printf("Blockchain with length %d is not replaced with %d blocks long\n", last.Index, len(blocks)-1)
 	}
 }
 
