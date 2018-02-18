@@ -236,11 +236,10 @@ func parsePacket(addr net.Addr, buf []byte) (packet, error) {
 		return packet{}, fmt.Errorf("Packet from %v is to short, only %v bytes", addr, len(buf))
 	}
 
-	id := binary.LittleEndian.Uint32(buf[1:5])
 	return packet{
 		addr:   addr,
 		header: buf[0],
-		id:     NodeID(id),
+		id:     parseNodeID(buf[1:5]),
 		reqID:  buf[5:9],
 		data:   buf[9:],
 	}, nil
