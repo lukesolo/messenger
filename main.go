@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/ugorji/go/codec"
@@ -20,10 +21,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("%b\n", conn.ID)
-	fmt.Println(conn.conn.LocalAddr())
+	port := conn.Port()
+	idBits := fmt.Sprintf("%b", conn.ID)
+	idBits = strings.Repeat("0", 32-len(idBits)) + idBits
+	log.Printf("Started to listen on port %v with NodeID\n%s\n", port, idBits)
 
-	tcp, err := net.Listen("tcp", conn.conn.LocalAddr().String())
+	tcp, err := net.Listen("tcp", conn.Addr())
 	if err != nil {
 		panic(err)
 	}
@@ -42,7 +45,7 @@ func main() {
 
 	go func() {
 		time.Sleep(time.Second * 10)
-		m := blockchain.NewMessage(fmt.Sprintf("Hi from %v", conn.conn.LocalAddr()))
+		m := blockchain.NewMessage(fmt.Sprintf("Hi from %v", conn.Port()))
 		conn.Broadcast(m.ToBytes())
 	}()
 

@@ -66,6 +66,20 @@ func (s *server) connect() error {
 	return nil
 }
 
+func (s server) Addr() string {
+	return s.conn.LocalAddr().String()
+}
+
+func (s server) Port() int {
+	addr := s.conn.LocalAddr().String()
+	portStr := strings.Split(addr, ":")[1]
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Println(err)
+	}
+	return port
+}
+
 func (s server) Listen() <-chan BroadcastMessage {
 	if !s.root {
 		s.ping(resolveAddr(s.initPort))
