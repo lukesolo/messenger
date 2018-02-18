@@ -58,27 +58,38 @@ func main() {
 			log.Println(err)
 			continue
 		}
-		fmt.Println(m.index, m.text)
+		fmt.Println(m.Index, m.Text)
 		if blockchain.AddLast(*m) {
-			fmt.Println("valid")
+			fmt.Println("valid from", broadcast.Addr)
 			broadcast.Resend()
 		} else {
-			fmt.Println("invalid")
-			go loadBlockchainTCP(broadcast.Addr)
+			fmt.Println("invalid from", broadcast.Addr)
+			go sendBlockchainTCP(broadcast.Addr)
 		}
 	}
 }
 
 func handleBlockchainTCP(conn net.Conn) {
 	defer conn.Close()
-	encoder := codec.NewEncoder(conn, &codec.MsgpackHandle{})
-	err := encoder.Encode(blockchain.blocks)
+
+	decoder := codec.NewDecoder(conn, &codec.MsgpackHandle{})
+	var blocks []message
+	err := decoder.Decode(&blocks)
 	if err != nil {
 		log.Println(err)
+		return
 	}
+
+	fmt.Println("Received blocks:", len(blocks))
+	if blockchain.Replace(blocks) {
+		fmt.Println("Blockchain replaced:", blockchain.Last().Index)
+	} else {
+		fmt.Println("Blockchain not replaced:", blockchain.Last().Index)
+	}
+
 }
 
-func loadBlockchainTCP(addr string) {
+func sendBlockchainTCP(addr string) {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		log.Println(err)
@@ -86,23 +97,16 @@ func loadBlockchainTCP(addr string) {
 	}
 	defer conn.Close()
 
-	decoder := codec.NewDecoder(conn, &codec.MsgpackHandle{})
-	var blocks []message
-	err = decoder.Decode(&blocks)
+	encoder := codec.NewEncoder(conn, &codec.MsgpackHandle{})
+	err = encoder.Encode(blockchain.blocks)
 	if err != nil {
 		log.Println(err)
-		return
-	}
-	if blockchain.Replace(blocks) {
-		fmt.Println("Blockchain replaced:", blockchain.Last().index)
-	} else {
-		fmt.Println("Blockchain not replaced:", blockchain.Last().index)
 	}
 }
 
 func NewBlockchain() *Blockchain {
 	genesis := message{}
-	genesis.hash = calcHash(genesis)
+	genesis.Hash = calcHash(genesis)
 	bc := &Blockchain{
 		genesis: genesis,
 		blocks:  []message{genesis},
@@ -129,11 +133,11 @@ func (bc *Blockchain) NewMessage(text string) message {
 
 	last := bc.last()
 	m := message{
-		text:     text,
-		index:    last.index + 1,
-		prevHash: last.hash,
+		Text:     text,
+		Index:    last.Index + 1,
+		PrevHash: last.Hash,
 	}
-	m.hash = calcHash(m)
+	m.Hash = calcHash(m)
 	bc.blocks = append(bc.blocks, m)
 	return m
 }
@@ -165,7 +169,7 @@ func (bc Blockchain) validate(blocks []message) bool {
 	if len(bc.blocks) >= len(blocks) {
 		return false
 	}
-	if bytes.Compare(bc.blocks[0].hash, blocks[0].hash) != 0 {
+	if bytes.Compare(bc.blocks[0].Hash, blocks[0].Hash) != 0 {
 		return false
 	}
 	prev := blocks[0]
@@ -183,33 +187,33 @@ func (bc Blockchain) last() message {
 }
 
 type message struct {
-	index    uint32
-	prevHash []byte
-	hash     []byte
-	text     string
+	Index    uint32
+	PrevHash []byte
+	Hash     []byte
+	Text     string
 }
 
 func (m message) validate(prev message) bool {
-	if m.index != prev.index+1 {
+	if m.Index != prev.Index+1 {
 		return false
 	}
-	if bytes.Compare(m.prevHash, prev.hash) != 0 {
+	if bytes.Compare(m.PrevHash, prev.Hash) != 0 {
 		return false
 	}
 	hash := calcHash(m)
-	if bytes.Compare(hash, m.hash) != 0 {
+	if bytes.Compare(hash, m.Hash) != 0 {
 		return false
 	}
 	return true
 }
 
 func (m *message) ToBytes() []byte {
-	size := 4 + 32 + 32 + len(m.text)
+	size := 4 + 32 + 32 + len(m.Text)
 	buf := make([]byte, size)
-	binary.LittleEndian.PutUint32(buf, m.index)
-	copy(buf[4:], m.prevHash)
-	copy(buf[36:], m.hash)
-	copy(buf[68:], m.text)
+	binary.LittleEndian.PutUint32(buf, m.Index)
+	copy(buf[4:], m.PrevHash)
+	copy(buf[36:], m.Hash)
+	copy(buf[68:], m.Text)
 	return buf
 }
 
@@ -218,18 +222,18 @@ func FromBytes(buf []byte) (*message, error) {
 		return nil, fmt.Errorf("Invalid broadcast message")
 	}
 	m := &message{
-		index:    binary.LittleEndian.Uint32(buf),
-		prevHash: buf[4:36],
-		hash:     buf[36:68],
-		text:     string(buf[68:]),
+		Index:    binary.LittleEndian.Uint32(buf),
+		PrevHash: buf[4:36],
+		Hash:     buf[36:68],
+		Text:     string(buf[68:]),
 	}
 	return m, nil
 }
 
 func calcHash(m message) []byte {
 	h := sha256.New()
-	binary.Write(h, binary.LittleEndian, m.index)
-	h.Write(m.prevHash)
-	io.WriteString(h, m.text)
+	binary.Write(h, binary.LittleEndian, m.Index)
+	h.Write(m.PrevHash)
+	io.WriteString(h, m.Text)
 	return h.Sum(nil)
 }
