@@ -18,7 +18,8 @@ const (
 	PONG       = 2
 	FIND_NODE  = 3
 	FOUND_NODE = 4
-	BROADCAST  = 5
+	DIRECT     = 5
+	BROADCAST  = 6
 )
 
 func init() {
@@ -32,6 +33,7 @@ func Connect(port int) (*server, error) {
 		initPort:   uint16(port),
 		packets:    make(chan packet, 16),
 		broadcasts: make(chan BroadcastMessage, 16),
+		directs:    make(chan DirectMessage, 16),
 		buckets:    newBuckets(id),
 	}
 	err := s.connect()
@@ -44,6 +46,7 @@ type server struct {
 	conn       net.PacketConn
 	packets    chan packet
 	broadcasts chan BroadcastMessage
+	directs    chan DirectMessage
 	buckets    buckets
 	root       bool
 }
@@ -80,7 +83,7 @@ func (s server) Port() int {
 	return port
 }
 
-func (s server) Listen() <-chan BroadcastMessage {
+func (s server) Listen() (<-chan DirectMessage, <-chan BroadcastMessage) {
 	if !s.root {
 		s.ping(resolveAddr(s.initPort))
 	}
@@ -104,7 +107,7 @@ func (s server) Listen() <-chan BroadcastMessage {
 		}
 	}()
 
-	return s.broadcasts
+	return s.directs, s.broadcasts
 }
 
 func (s server) startRandomLookup() {
@@ -130,6 +133,12 @@ func (s server) broadcast(distance byte, data []byte) {
 			s.sendBroadcast(peer.addr, byte(distance)-1, data)
 		})
 	}
+}
+
+func (s server) DirectToFurthest(data []byte) {
+	s.buckets.ExecByDistance(32, func(peer bucketPeer) {
+		s.sendDirect(peer.addr, data)
+	})
 }
 
 func (s server) demultiplexPackets() {
@@ -161,6 +170,14 @@ func (s server) demultiplexPackets() {
 				s.buckets.Add(peer.id, peer.addr)
 			}
 			// s.buckets.Print()
+		case DIRECT:
+			log.Printf("Got DIRECT from %v\n", packet.addr)
+			s.buckets.Add(packet.id, packet.addr)
+			s.directs <- DirectMessage{
+				ID:   packet.id,
+				Addr: packet.addr.String(),
+				Data: packet.data,
+			}
 		case BROADCAST:
 			log.Printf("Got BROADCAST from %v\n", packet.addr)
 			distance := packet.data[0]
@@ -245,6 +262,10 @@ func (s server) sendBroadcast(addr net.Addr, distance byte, data []byte) error {
 	return s.request(addr, BROADCAST, buf)
 }
 
+func (s server) sendDirect(addr net.Addr, data []byte) error {
+	return s.request(addr, DIRECT, data)
+}
+
 func parsePacket(addr net.Addr, buf []byte) (packet, error) {
 	if len(buf) < 9 {
 		return packet{}, fmt.Errorf("Packet from %v is to short, only %v bytes", addr, len(buf))
@@ -272,6 +293,12 @@ type BroadcastMessage struct {
 	Addr   string
 	Data   []byte
 	Resend func()
+}
+
+type DirectMessage struct {
+	ID   NodeID
+	Addr string
+	Data []byte
 }
 
 type found struct {

@@ -50,6 +50,11 @@ func main() {
 	}()
 
 	go func() {
+		time.Sleep(time.Second * 7)
+		conn.DirectToFurthest([]byte("My direct message"))
+	}()
+
+	go func() {
 		for {
 			time.Sleep(time.Second * 5)
 			last := blockchain.Last()
@@ -57,20 +62,33 @@ func main() {
 		}
 	}()
 
-	broadcasts := conn.Listen()
-	for broadcast := range broadcasts {
-		m, err := FromBytes(broadcast.Data)
-		if err != nil {
-			log.Println(err)
-			continue
+	directs, broadcasts := conn.Listen()
+	for {
+		select {
+		case direct := <-directs:
+			go handleDirect(direct)
+		case broadcast := <-broadcasts:
+			go handleBroadcast(broadcast)
 		}
-		if blockchain.AddLast(*m) {
-			log.Printf("Valid message with index %d from %v\n", m.Index, broadcast.Addr)
-			broadcast.Resend()
-		} else {
-			log.Printf("Invalid message with index %d from %v\n", m.Index, broadcast.Addr)
-			go sendBlockchainTCP(broadcast.Addr)
-		}
+	}
+}
+
+func handleDirect(direct DirectMessage) {
+	log.Println("Direct", string(direct.Data))
+}
+
+func handleBroadcast(broadcast BroadcastMessage) {
+	m, err := FromBytes(broadcast.Data)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	if blockchain.AddLast(*m) {
+		log.Printf("Valid message with index %d from %v\n", m.Index, broadcast.Addr)
+		broadcast.Resend()
+	} else {
+		log.Printf("Invalid message with index %d from %v\n", m.Index, broadcast.Addr)
+		go sendBlockchainTCP(broadcast.Addr)
 	}
 }
 
