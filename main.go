@@ -10,6 +10,10 @@ import (
 	"github.com/ugorji/go/codec"
 )
 
+const (
+	LAST_MESSAGE = 1
+)
+
 var blockchain *Blockchain
 
 func init() {
@@ -50,8 +54,10 @@ func main() {
 	}()
 
 	go func() {
-		time.Sleep(time.Second * 7)
-		conn.DirectToFurthest([]byte("My direct message"))
+		for {
+			time.Sleep(time.Second * 1)
+			conn.DirectToFurthest(directLastMessagePacket())
+		}
 	}()
 
 	go func() {
@@ -63,18 +69,42 @@ func main() {
 	}()
 
 	directs, broadcasts := conn.Listen()
-	for {
-		select {
-		case direct := <-directs:
-			go handleDirect(direct)
-		case broadcast := <-broadcasts:
-			go handleBroadcast(broadcast)
+	go func() {
+		for direct := range directs {
+			go handleDirect(conn, direct)
 		}
+	}()
+	for broadcast := range broadcasts {
+		go handleBroadcast(broadcast)
 	}
 }
 
-func handleDirect(direct DirectMessage) {
-	log.Println("Direct", string(direct.Data))
+func handleDirect(conn *server, direct DirectMessage) {
+	switch direct.Data[0] {
+	case LAST_MESSAGE:
+		m, err := FromBytes(direct.Data[1:])
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		last := blockchain.Last()
+		if m.Index < last.Index {
+			go sendBlockchainTCP(direct.Addr)
+		}
+
+		if m.Index == last.Index {
+			return
+		}
+
+		if !blockchain.AddLast(*m) {
+			log.Printf("Invalid direct message with index %d from %v\n", m.Index, direct.Addr)
+			go conn.Direct(direct.ID, directLastMessagePacket())
+		} else {
+			log.Printf("Valid direct message with index %d from %v\n", m.Index, direct.Addr)
+		}
+	default:
+		log.Println("Unknown header", direct.Data[0])
+	}
 }
 
 func handleBroadcast(broadcast BroadcastMessage) {
@@ -124,4 +154,13 @@ func sendBlockchainTCP(addr string) {
 	if err != nil {
 		log.Println(err)
 	}
+}
+
+func directLastMessagePacket() []byte {
+	last := blockchain.Last()
+	data := last.ToBytes()
+	buf := make([]byte, len(data)+1)
+	buf[0] = LAST_MESSAGE
+	copy(buf[1:], data)
+	return buf
 }

@@ -135,6 +135,12 @@ func (s server) broadcast(distance byte, data []byte) {
 	}
 }
 
+func (s server) Direct(id NodeID, data []byte) {
+	s.buckets.Exec(id, func(peer bucketPeer) {
+		s.sendDirect(peer.addr, data)
+	})
+}
+
 func (s server) DirectToFurthest(data []byte) {
 	s.buckets.ExecByDistance(32, func(peer bucketPeer) {
 		s.sendDirect(peer.addr, data)
@@ -171,7 +177,7 @@ func (s server) demultiplexPackets() {
 			}
 			// s.buckets.Print()
 		case DIRECT:
-			log.Printf("Got DIRECT from %v\n", packet.addr)
+			// log.Printf("Got DIRECT from %v\n", packet.addr)
 			s.buckets.Add(packet.id, packet.addr)
 			s.directs <- DirectMessage{
 				ID:   packet.id,
