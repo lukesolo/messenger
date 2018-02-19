@@ -166,36 +166,33 @@ func (s server) DirectToFurthest(data []byte) {
 
 func (s server) demultiplexPackets() {
 	for packet := range s.packets {
+		s.buckets.Add(packet.id, packet.addr)
+
 		switch packet.header {
 		case PING:
 			log.Printf("Got PING from %v\n", packet.addr)
-			s.buckets.Add(packet.id, packet.addr).
-				Exec(packet.id, func(peer bucketPeer) {
-					s.pong(packet)
-				})
+			s.buckets.Exec(packet.id, func(peer bucketPeer) {
+				s.pong(packet)
+			})
 		case PONG:
 			log.Printf("Got PONG from %v\n", packet.addr)
-			s.buckets.Add(packet.id, packet.addr).
-				Exec(packet.id, func(peer bucketPeer) {
-					s.findNode(packet.addr, s.ID)
-				})
+			s.buckets.Exec(packet.id, func(peer bucketPeer) {
+				s.findNode(packet.addr, s.ID)
+			})
 		case FIND_NODE:
 			// log.Printf("Got FIND_NODE from %v\n", packet.addr)
 			searchedID := parseNodeID(packet.data[:4])
-			s.buckets.Add(packet.id, packet.addr).
-				ExecBestNodes(searchedID, func(peers []bucketPeer) {
-					s.foundNode(packet, peers)
-				})
+			s.buckets.ExecBestNodes(searchedID, func(peers []bucketPeer) {
+				s.foundNode(packet, peers)
+			})
 		case FOUND_NODE:
 			// log.Printf("Got FOUND_NODE from %v\n", packet.addr)
 			peers := parseFound(packet.data)
 			for _, peer := range peers {
 				s.buckets.Add(peer.id, peer.addr)
 			}
-			// s.buckets.Print()
 		case DIRECT:
 			// log.Printf("Got DIRECT from %v\n", packet.addr)
-			s.buckets.Add(packet.id, packet.addr)
 			s.directs <- DirectMessage{
 				ID:   packet.id,
 				Addr: packet.addr.String(),
@@ -205,7 +202,6 @@ func (s server) demultiplexPackets() {
 			// log.Printf("Got BROADCAST from %v\n", packet.addr)
 			distance := packet.data[0]
 			data := packet.data[1:]
-			s.buckets.Add(packet.id, packet.addr)
 			s.broadcasts <- BroadcastMessage{
 				ID:   packet.id,
 				Addr: packet.addr.String(),
