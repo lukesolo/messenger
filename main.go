@@ -37,7 +37,6 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	time.Sleep(time.Hour)
 }
 
 func NewMessenger(initPort int) *messenger {
@@ -107,11 +106,9 @@ func (msgr *messenger) Start() error {
 			go msgr.handleDirect(direct)
 		}
 	}()
-	go func() {
-		for broadcast := range broadcasts {
-			go msgr.handleBroadcast(broadcast)
-		}
-	}()
+	for broadcast := range broadcasts {
+		go msgr.handleBroadcast(broadcast)
+	}
 	return nil
 }
 
